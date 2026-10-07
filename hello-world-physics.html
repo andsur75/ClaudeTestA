@@ -1,0 +1,262 @@
+<title>Hello World Pileup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Bricolage+Grotesque:wght@700&display=swap">
+<style>
+  /* Layout: full-height toolbar + physics canvas that fills the rest of the screen */
+  :root {
+    --bg: #14161c;
+    --surface: #1d2029;
+    --fg: #eceff4;
+    --muted: #8b92a3;
+    --accent: #ffb454;
+    --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: var(--font-mono);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 0.6rem 1rem; padding: 0.75rem 1rem;
+  }
+  h1 {
+    margin: 0; font: 700 1.35rem/1 var(--font-display);
+    letter-spacing: -0.01em; text-wrap: balance;
+  }
+  h1 span { color: var(--accent); }
+  .hint { color: var(--muted); font-size: 0.75rem; margin: 0.3rem 0 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  button {
+    font: 500 0.8rem var(--font-mono); color: var(--fg);
+    background: var(--surface); border: 1px solid #2c303c;
+    padding: 0.5rem 0.85rem; border-radius: 6px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button[aria-pressed="true"] { background: var(--accent); color: #1a1405; border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #stage { flex: 1; min-height: 0; position: relative; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+</style>
+
+<header>
+  <div>
+    <h1>Hello, World! <span>x 20 languages</span></h1>
+    <p class="hint">Drag a snippet to throw it. Tap empty space to drop a new one.</p>
+  </div>
+  <div class="controls">
+    <button id="add">Drop more</button>
+    <button id="shake">Shake</button>
+    <button id="zero" aria-pressed="false">Zero gravity</button>
+    <button id="reset">Reset</button>
+  </div>
+</header>
+<div id="stage"><canvas id="c"></canvas></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+(function () {
+  var M = Matter, Engine = M.Engine, Bodies = M.Bodies, Body = M.Body, World = M.Composite,
+      Mouse = M.Mouse, MouseConstraint = M.MouseConstraint, Query = M.Query;
+
+  var SNIPPETS = [
+    ['Python', 'print("Hello, World!")', '#4b8bbe'],
+    ['JavaScript', 'console.log("Hello, World!")', '#f0db4f'],
+    ['C', 'printf("Hello, World!\\n");', '#6d8cc7'],
+    ['Rust', 'println!("Hello, World!");', '#e0703c'],
+    ['Go', 'fmt.Println("Hello, World!")', '#43c6d8'],
+    ['Ruby', 'puts "Hello, World!"', '#d8404c'],
+    ['Java', 'System.out.println("Hello, World!");', '#e28a2b'],
+    ['Bash', 'echo "Hello, World!"', '#6fcf6f'],
+    ['Lisp', '(print "Hello, World!")', '#a98be0'],
+    ['SQL', "SELECT 'Hello, World!';", '#5fb3a1'],
+    ['Haskell', 'main = putStrLn "Hello, World!"', '#8f6fd1'],
+    ['Swift', 'print("Hello, World!")', '#f0663c'],
+    ['Kotlin', 'println("Hello, World!")', '#b075e8'],
+    ['PHP', '<?php echo "Hello, World!";', '#8892bf'],
+    ['HTML', '<h1>Hello, World!</h1>', '#e5633f'],
+    ['Brainf*ck', '++++++++[>++++[>++>+++>+<<<-]>+>+>->>+[<]<-]>>.', '#9aa0ae'],
+    ['Morse', '.... . .-.. .-.. ---  .-- --- .-. .-.. -..', '#ffb454'],
+    ['Binary', '01001000 01100101 01101100 01101100 01101111', '#6fe0a0'],
+    ['Emoji', '👋🌍', '#ff8fb1'],
+    ['Lua', 'print("Hello, World!")', '#5b6ee1']
+  ];
+
+  var canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+  var stage = document.getElementById('stage');
+  var engine = Engine.create();
+  var world = engine.world;
+  var dpr = 1, W = 0, H = 0, walls = [], zero = false;
+  var FONT = '500 14px "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
+  var LABEL = '700 10px "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
+  var mouse = Mouse.create(canvas);
+  mouse.element.removeEventListener('mousewheel', mouse.mousewheel);
+  mouse.element.removeEventListener('DOMMouseScroll', mouse.mousewheel);
+  mouse.element.removeEventListener('wheel', mouse.mousewheel);
+  var mc = MouseConstraint.create(engine, { mouse: mouse, constraint: { stiffness: 0.2, render: { visible: false } } });
+  World.add(world, mc);
+
+  function makeBody(i, x, y) {
+    var s = SNIPPETS[i % SNIPPETS.length];
+    ctx.font = FONT;
+    var w = Math.min(ctx.measureText(s[1]).width + 28, Math.max(W - 24, 120));
+    var h = 46;
+    var b = Bodies.rectangle(x, y, w, h, {
+      chamfer: { radius: 10 }, restitution: 0.55, friction: 0.3, frictionAir: zero ? 0 : 0.01, density: 0.002
+    });
+    b.snippet = s;
+    Body.setAngle(b, (Math.random() - 0.5) * 0.8);
+    Body.setVelocity(b, { x: (Math.random() - 0.5) * 6, y: Math.random() * 2 });
+    Body.setAngularVelocity(b, (Math.random() - 0.5) * 0.1);
+    return b;
+  }
+
+  function snippets() {
+    return World.allBodies(world).filter(function (b) { return b.snippet; });
+  }
+
+  function drop(n, x) {
+    for (var k = 0; k < n; k++) {
+      var i = Math.floor(Math.random() * SNIPPETS.length);
+      var px = x != null ? x : 80 + Math.random() * Math.max(W - 160, 10);
+      setTimeout(function (i, px) {
+        World.add(world, makeBody(i, px, zero ? 50 : -30));
+      }.bind(null, i, px), k * 140);
+    }
+  }
+
+  function buildWalls() {
+    World.remove(world, walls);
+    var t = 200, o = { isStatic: true, friction: 0.4, restitution: 0.4 };
+    walls = [
+      Bodies.rectangle(W / 2, H + t / 2, W + 2 * t, t, o),
+      Bodies.rectangle(-t / 2, H / 2 - 400, t, H + 1000, o),
+      Bodies.rectangle(W + t / 2, H / 2 - 400, t, H + 1000, o)
+    ];
+    World.add(world, walls);
+    // keep anything that ended up out of bounds inside after a resize
+    snippets().forEach(function (b) {
+      if (b.position.x > W) Body.setPosition(b, { x: W - 60, y: b.position.y });
+      if (b.position.y > H) Body.setPosition(b, { x: b.position.x, y: H - 40 });
+    });
+  }
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    var r = stage.getBoundingClientRect();
+    W = r.width; H = r.height;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    mouse.pixelRatio = dpr;
+    buildWalls();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    // floor line
+    ctx.strokeStyle = '#2c303c'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, H - 1); ctx.lineTo(W, H - 1); ctx.stroke();
+
+    var bodies = snippets();
+    for (var i = 0; i < bodies.length; i++) {
+      var b = bodies[i], s = b.snippet;
+      var w = b.bounds.max.x - b.bounds.min.x, h = 46;
+      // use stored dimensions (bounds grow when rotated)
+      if (!b._w) { ctx.font = FONT; b._w = Math.min(ctx.measureText(s[1]).width + 28, Math.max(W - 24, 120)); }
+      w = b._w;
+      ctx.save();
+      ctx.translate(b.position.x, b.position.y);
+      ctx.rotate(b.angle);
+      roundRect(-w / 2, -h / 2, w, h, 10);
+      ctx.fillStyle = '#1d2029'; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = s[2]; ctx.stroke();
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      ctx.font = LABEL; ctx.fillStyle = s[2];
+      ctx.fillText(s[0].toUpperCase(), -w / 2 + 14, -h / 2 + 12);
+      ctx.font = FONT; ctx.fillStyle = '#eceff4';
+      ctx.save();
+      roundRect(-w / 2 + 2, -h / 2 + 2, w - 4, h - 4, 8); ctx.clip();
+      ctx.fillText(s[1], -w / 2 + 14, 7);
+      ctx.restore();
+      ctx.restore();
+    }
+  }
+
+  // click on empty space spawns a snippet at the pointer
+  var downOnBody = false;
+  canvas.addEventListener('pointerdown', function (e) {
+    var r = canvas.getBoundingClientRect();
+    var p = { x: e.clientX - r.left, y: e.clientY - r.top };
+    downOnBody = Query.point(snippets(), p).length > 0;
+    canvas.style.cursor = 'grabbing';
+    if (!downOnBody) drop(1, p.x);
+  });
+  window.addEventListener('pointerup', function () { canvas.style.cursor = 'grab'; });
+
+  document.getElementById('add').onclick = function () { drop(5); };
+  document.getElementById('shake').onclick = function () {
+    snippets().forEach(function (b) {
+      Body.setVelocity(b, { x: (Math.random() - 0.5) * 30, y: -8 - Math.random() * 22 });
+      Body.setAngularVelocity(b, (Math.random() - 0.5) * 0.4);
+    });
+  };
+  var zbtn = document.getElementById('zero');
+  zbtn.onclick = function () {
+    zero = !zero;
+    zbtn.setAttribute('aria-pressed', zero);
+    engine.gravity.y = zero ? 0 : 1;
+    snippets().forEach(function (b) {
+      b.frictionAir = zero ? 0 : 0.01;
+      if (zero) Body.setVelocity(b, { x: (Math.random() - 0.5) * 5, y: (Math.random() - 0.5) * 5 });
+    });
+  };
+  document.getElementById('reset').onclick = function () {
+    World.remove(world, snippets());
+    drop(SNIPPETS.length);
+  };
+
+  // zero gravity needs a ceiling so nothing floats away
+  var ceiling = null;
+  function updateCeiling() {
+    if (zero && !ceiling) {
+      ceiling = Bodies.rectangle(W / 2, -100, W + 400, 200, { isStatic: true, restitution: 0.4 });
+      World.add(world, ceiling);
+    } else if (!zero && ceiling) { World.remove(world, ceiling); ceiling = null; }
+    else if (ceiling) { Body.setPosition(ceiling, { x: W / 2, y: -100 }); }
+  }
+
+  var last = performance.now();
+  function frame(now) {
+    var dt = Math.min(now - last, 33); last = now;
+    updateCeiling();
+    Engine.update(engine, dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  function start() {
+    resize();
+    window.addEventListener('resize', resize);
+    drop(SNIPPETS.length);
+    requestAnimationFrame(frame);
+  }
+  var fontsReady = document.fonts && document.fonts.load
+    ? Promise.all([document.fonts.load(FONT), document.fonts.load(LABEL)])
+    : Promise.resolve();
+  fontsReady.then(start, start);
+})();
+</script>
