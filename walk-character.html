@@ -120,6 +120,7 @@
   var WALK = [
     { t: 'Общее: темп, шаг, камера', open: true, p: [
       { k: 'timeScale', l: 'Скорость времени', min: 0, max: 3, step: 0.01, v: 1, u: '×' },
+      { k: 'noVsync', type: 'check', l: 'Без V-Sync (рендер без ограничения FPS)', min: 0, max: 1, v: 1 },
       { k: 'layer', type: 'check', l: 'Слои: позы + синусоиды поверх', min: 0, max: 1, v: 1 },
       { k: 'blend', l: 'Кроссфейд: синусоиды (0) — позы (1)', min: 0, max: 1, step: 0.01, v: 1 },
       { k: 'cadence', l: 'Темп, циклов в секунду', min: 0.2, max: 2, step: 0.01, v: 0.9 },
@@ -689,25 +690,46 @@
     }
     return S.walk.cadence * (sine + (keys - sine) * S.walk.blend);
   }
+  // Frame loop. Everything animated is a function of `phase` and `scroll`, and both
+  // advance by real elapsed time, so motion speed is identical at 15 or 300 FPS.
+  // dt is only capped at 0.25 s so a background tab does not jump on return.
   var last = performance.now();
   var fpsEl = document.getElementById('fps'), fpsFrames = 0, fpsTime = 0;
-  function frame(now) {
-    var real = (now - last) / 1000;
-    var dt = Math.min(real, 0.05) * S.walk.timeScale; last = now;
+  function step() {
+    var now = performance.now();
+    var real = (now - last) / 1000; last = now;
+    var dt = Math.min(real, 0.25) * S.walk.timeScale;
     fpsFrames++; fpsTime += real;
     if (fpsTime >= 0.5) { fpsEl.textContent = Math.round(fpsFrames / fpsTime) + ' FPS'; fpsFrames = 0; fpsTime = 0; }
     if (walking && frozenIdx < 0) {
       phase = (phase + S.walk.cadence * dt) % 1;
       scroll += speed() * dt;
     }
-    updateShift();
     render();
-    requestAnimationFrame(frame);
   }
 
+  // V-Sync on: requestAnimationFrame, paced by the display.
+  // V-Sync off: a MessageChannel loop that renders as fast as the device allows.
+  // The browser still shows frames on display refresh; the extra frames cut input
+  // latency and show how much headroom the scene has. Hidden tabs fall back to rAF.
+  var chan = new MessageChannel();
+  function loopRaf() {
+    if (S.walk.noVsync && !document.hidden) { chan.port2.postMessage(0); return; }
+    step();
+    requestAnimationFrame(loopRaf);
+  }
+  chan.port1.onmessage = function () {
+    if (!S.walk.noVsync || document.hidden) { requestAnimationFrame(loopRaf); return; }
+    step();
+    chan.port2.postMessage(0);
+  };
+
+  // panel height only changes on resize or folder toggles, so measure it then
+  updateShift();
+  if (window.ResizeObserver) new ResizeObserver(updateShift).observe(panel);
+  window.addEventListener('resize', function () { resize(); updateShift(); });
   resize();
-  window.addEventListener('resize', resize);
-  requestAnimationFrame(frame);
+  requestAnimationFrame(loopRaf);
 })();
 </script>
 </body>
