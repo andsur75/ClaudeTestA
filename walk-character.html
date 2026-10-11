@@ -176,7 +176,7 @@
 
   // ---------- key poses (frozen when their checkbox is on) ----------
   // Taken from Muybridge's walking plate. Near leg = closer to the camera.
-  // Foot angle: + toe up, - toe down. Touching a pose slider freezes that pose.
+  // Foot angle: + toe up, - toe down. Only the checkbox freezes a pose.
   var POSE_P = [
     { k: 'pitch', l: 'Наклон таза', min: -60, max: 60, step: 0.5, u: '°' },
     { k: 'height', l: 'Сдвиг высоты таза', min: -0.5, max: 0.5, step: 0.001, u: 'м' },
@@ -673,9 +673,7 @@
     s.append(name, lab);
     d.append(s);
     POSE_P.forEach(function (def) {
-      d.append(sliderRow(def, S.poses[i], 'p' + i + '-' + def.k, function () {
-        if (frozenIdx !== i) setFrozen(i);
-      }));
+      d.append(sliderRow(def, S.poses[i], 'p' + i + '-' + def.k));
     });
     cb.addEventListener('change', function () {
       setFrozen(cb.checked ? i : -1);
