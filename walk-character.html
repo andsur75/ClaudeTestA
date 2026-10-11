@@ -77,6 +77,12 @@
     pointer-events: none; z-index: 2;
   }
 
+  #fpsHint {
+    position: fixed; top: calc(34px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+    max-width: min(320px, calc(100% - 32px)); padding: 6px 10px; border-radius: 8px; text-align: center;
+    background: rgba(28, 34, 48, 0.85); color: #fff; font-size: 12px; pointer-events: none; z-index: 2;
+  }
+
   /* Right: round walk toggle */
   #walk {
     position: fixed; right: 20px; bottom: 20px; width: 88px; height: 88px;
@@ -99,6 +105,7 @@
 <body>
 <canvas id="c"></canvas>
 <div id="fps" aria-live="off">-- FPS</div>
+<div id="fpsHint" hidden>Браузер держит 30 FPS, пока вы не коснётесь страницы. Тапните по сцене.</div>
 <aside id="panel"></aside>
 <button id="walk" type="button" aria-pressed="true" aria-label="Ходьба: старт или пауза">
   <svg viewBox="0 0 24 24" fill="currentColor"><path id="icon" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
@@ -696,12 +703,22 @@
   // dt is only capped at 0.25 s so a background tab does not jump on return.
   var last = performance.now();
   var fpsEl = document.getElementById('fps'), fpsFrames = 0, fpsTime = 0;
+  var hintEl = document.getElementById('fpsHint'), interacted = false;
+  function markInteracted() { interacted = true; hintEl.hidden = true; }
+  ['pointerdown', 'keydown', 'touchstart'].forEach(function (t) {
+    window.addEventListener(t, markInteracted, { once: true, passive: true, capture: true });
+  });
   function step() {
     var now = performance.now();
     var real = (now - last) / 1000; last = now;
     var dt = Math.min(real, 0.25) * S.walk.timeScale;
     fpsFrames++; fpsTime += real;
-    if (fpsTime >= 0.5) { fpsEl.textContent = Math.round(fpsFrames / fpsTime) + ' FPS'; fpsFrames = 0; fpsTime = 0; }
+    if (fpsTime >= 0.5) {
+      var fps = Math.round(fpsFrames / fpsTime);
+      fpsEl.textContent = fps + ' FPS'; fpsFrames = 0; fpsTime = 0;
+      // embedded frames are often held at 30 FPS until the first user interaction
+      hintEl.hidden = interacted || fps < 25 || fps > 35;
+    }
     if (walking && frozenIdx < 0) {
       phase = (phase + S.walk.cadence * dt) % 1;
       scroll += speed() * dt;
