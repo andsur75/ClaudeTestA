@@ -129,6 +129,7 @@
     { t: 'Общее: темп, шаг, камера', open: true, p: [
       { k: 'timeScale', l: 'Скорость времени', min: 0, max: 3, step: 0.01, v: 1, u: '×' },
       { k: 'noVsync', type: 'check', l: 'Тест: без V-Sync (лагает, только замер запаса FPS)', min: 0, max: 1, v: 0 },
+      { k: 'ik', type: 'check', l: 'IK: таз по синусоиде, колени подстраиваются', min: 0, max: 1, v: 1 },
       { k: 'layer', type: 'check', l: 'Слои: позы + синусоиды поверх', min: 0, max: 1, v: 1 },
       { k: 'sineAmt', l: 'Сила синусоид поверх поз', min: 0, max: 3, step: 0.01, v: 1, u: '×' },
       { k: 'blend', l: 'Кроссфейд: синусоиды (0) — позы (1)', min: 0, max: 1, step: 0.01, v: 1 },
@@ -137,6 +138,7 @@
       { k: 'camDist', l: 'Камера: дистанция', min: 5, max: 20, step: 0.1, v: 9, u: 'м' }
     ]},
     { t: 'Таз: положение и подъём', p: [
+      { k: 'pelvisBase', l: 'Базовая высота таза (IK)', min: 0.6, max: 1.05, step: 0.005, v: 0.92, u: 'м' },
       { k: 'pelvisX', l: 'Таз вперёд (+) / назад (−) от стоп', min: -0.4, max: 0.4, step: 0.005, v: 0, u: 'м' },
       { k: 'gap', l: 'Сдвиг высоты таза', min: -0.1, max: 0.1, step: 0.001, v: 0, u: 'м' },
       { k: 'bobAmp', l: 'Амплитуда подъёма', min: 0, max: 0.1, step: 0.001, v: 0.025, u: 'м' },
@@ -499,6 +501,31 @@
       return { hip: hip, knee: knee, ankle: ankle, fc: fc, z: z, foot: L.foot, minY: Math.min(heel[1], toe[1]) };
     });
     var Py = -Math.min(legs[0].minY, legs[1].minY) + pe.lift;
+
+    // IK mode: the pelvis height is the sinusoid itself (base + bob), not solved from the
+    // ground. Feet go where the poses/sinusoids put them: the lower one is pinned to the
+    // street, the other is kept above it. Then each knee is solved (two-bone IK) so thigh
+    // and shin reach from the hip to that ankle.
+    if (W.ik) {
+      Py = W.pelvisBase + pe.lift;
+      var stance = legs[0].minY <= legs[1].minY ? 0 : 1;
+      legs.forEach(function (l, i) {
+        var sole = l.minY - l.ankle[1];          // sole bottom relative to the ankle (< 0)
+        var ty = l.ankle[1] + Py;                 // where FK puts the ankle, world height
+        ty = i === stance ? -sole : Math.max(ty, -sole);
+        var hx = l.hip[0], tx = l.ankle[0];
+        var dx = tx - hx, dy = (ty - Py);
+        var d = Math.min(Math.max(Math.hypot(dx, dy), Math.abs(L1 - L2) + 1e-4), L1 + L2 - 1e-4);
+        var hipA = Math.atan2(dx, -dy) + Math.acos((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d));
+        var kneeA = Math.PI - Math.acos((L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2));
+        var sa = hipA - kneeA;
+        l.knee = [hx + L1 * Math.sin(hipA), -L1 * Math.cos(hipA)];
+        l.ankle = [l.knee[0] + L2 * Math.sin(sa), l.knee[1] - L2 * Math.cos(sa)];
+        var cf = Math.cos(l.foot), sf = Math.sin(l.foot);
+        l.fc = [l.ankle[0] + 0.05 * cf + 0.07 * sf, l.ankle[1] + 0.05 * sf - 0.07 * cf];
+        l.minY = l.ankle[1] + sole;
+      });
+    }
 
     var parts = [];
     var Mp = mul(T(0, Py, 0), mul(RY(pe.yaw), RZ(-pe.pitch)));   // pelvis frame, upper body rides on it
