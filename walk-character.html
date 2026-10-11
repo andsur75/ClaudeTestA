@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Walk Cycle</title>
+<style>
+  :root {
+    --panel: rgba(255, 255, 255, 0.95);
+    --ink: #1c2230;
+    --muted: #6b7385;
+    --line: #dde2ea;
+    --accent: #e8743b;
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    overflow: hidden; background: #cfd8e3; color: var(--ink);
+    font: 12px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* Left: all sliders, grouped into folders */
+  #panel {
+    position: fixed; left: 12px; top: 12px; bottom: 12px; width: 300px;
+    overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+    background: var(--panel); border-radius: 12px; padding: 6px 10px 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+  }
+  details { border-top: 1px solid var(--line); }
+  details:first-child { border-top: 0; }
+  summary {
+    list-style: none; cursor: pointer; padding: 9px 2px;
+    display: flex; align-items: center; gap: 8px; font-weight: 600;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸"; color: var(--muted); transition: transform 0.15s; }
+  details[open] > summary::before { transform: rotate(90deg); }
+  .row {
+    display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+    padding: 2px 2px 8px 18px;
+  }
+  .row > span { color: var(--muted); }
+  .row output { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .row input { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: var(--accent); }
+  .pose summary .name { flex: 1; }
+  .freeze {
+    display: flex; align-items: center; gap: 4px; font-weight: 500;
+    color: var(--ink); padding: 3px 6px; border-radius: 6px; background: #f1f3f7;
+    white-space: nowrap;
+  }
+  .freeze input { margin: 0; accent-color: var(--accent); }
+
+  /* Right: round walk toggle */
+  #walk {
+    position: fixed; right: 20px; bottom: 20px; width: 88px; height: 88px;
+    border: 0; border-radius: 50%; cursor: pointer; color: #fff;
+    background: var(--accent); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    display: grid; place-items: center; padding: 0;
+  }
+  #walk[aria-pressed="false"] { background: #5b6475; }
+  #walk:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  #walk svg { width: 34px; height: 34px; }
+
+  /* Phones: sliders become a bottom sheet, the walk circle moves to the top right */
+  @media (max-width: 640px) {
+    #panel { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 48vh; }
+    #walk { top: 12px; right: 12px; bottom: auto; width: 64px; height: 64px; }
+    #walk svg { width: 26px; height: 26px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<aside id="panel"></aside>
+<button id="walk" type="button" aria-pressed="true" aria-label="Ходьба: старт или пауза">
+  <svg viewBox="0 0 24 24" fill="currentColor"><path id="icon" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+</button>
+
+<script>
+(function () {
+  'use strict';
+
+  var D = Math.PI / 180, TAU = Math.PI * 2;
+  var L1 = 0.45, L2 = 0.44;   // thigh and shin length, m
+  var HIP_Z = 0.09;           // leg offset from the body centre line (near leg is +Z, toward camera)
+  var KEY = 'walk-character-v1';
+
+  // ---------- tunable parameters (walking) ----------
+  // Every sinusoid is: value = bias + amp * sin(cycle + phase). Angles in degrees.
+  var WALK = [
+    { t: 'Скорость и высота таза', open: true, p: [
+      { k: 'cadence', l: 'Частота шага, циклов/с', min: 0.2, max: 2, step: 0.01, v: 1 },
+      { k: 'stride', l: 'Длина шага (масштаб бедра и колена)', min: 0.2, max: 2, step: 0.01, v: 1, u: '×' },
+      { k: 'gap', l: 'Сдвиг высоты таза', min: -0.1, max: 0.1, step: 0.001, v: 0, u: 'м' }
+    ]},
+    { t: 'Таз: подъём и наклон', p: [
+      { k: 'bobAmp', l: 'Амплитуда подъёма таза', min: 0, max: 0.1, step: 0.001, v: 0.02, u: 'м' },
+      { k: 'bobPh', l: 'Фаза подъёма таза', min: -180, max: 180, step: 1, v: 0, u: '°' },
+      { k: 'pitchBias', l: 'Базовый наклон вперёд', min: -20, max: 20, step: 0.1, v: 3, u: '°' },
+      { k: 'pitchAmp', l: 'Амплитуда наклона', min: 0, max: 20, step: 0.1, v: 3, u: '°' }
+    ]},
+    { t: 'Таз: поворот', p: [
+      { k: 'yawAmp', l: 'Амплитуда поворота таза', min: 0, max: 30, step: 0.5, v: 6, u: '°' },
+      { k: 'yawPh', l: 'Фаза поворота таза', min: -180, max: 180, step: 1, v: 0, u: '°' }
+    ]},
+    { t: 'Бедро', p: [
+      { k: 'flexBias', l: 'Среднее положение', min: -40, max: 40, step: 0.5, v: 8, u: '°' },
+      { k: 'flexAmp', l: 'Амплитуда маха', min: 0, max: 60, step: 0.5, v: 26, u: '°' },
+      { k: 'flexPh', l: 'Фаза', min: -180, max: 180, step: 1, v: 90, u: '°' }
+    ]},
+    { t: 'Колено', p: [
+      { k: 'kneeBias', l: 'Среднее сгибание', min: 0, max: 90, step: 0.5, v: 30, u: '°' },
+      { k: 'kneeAmp', l: 'Амплитуда сгибания', min: 0, max: 90, step: 0.5, v: 30, u: '°' },
+      { k: 'kneePh', l: 'Фаза сгибания', min: -180, max: 180, step: 1, v: -20, u: '°' },
+      { k: 'clear', l: 'Клиренс: подъём стопы при махе', min: 0, max: 90, step: 0.5, v: 25, u: '°' }
+    ]},
+    { t: 'Голень', p: [
+      { k: 'shinBias', l: 'Среднее наклон голени', min: -30, max: 30, step: 0.5, v: 0, u: '°' },
+      { k: 'shinAmp', l: 'Амплитуда наклона голени', min: 0, max: 30, step: 0.5, v: 4, u: '°' },
+      { k: 'shinPh', l: 'Фаза голени', min: -180, max: 180, step: 1, v: 0, u: '°' }
+    ]},
+    { t: 'Стопа и пятка', p: [
+      { k: 'footBias', l: 'Среднее положение стопы', min: -40, max: 40, step: 0.5, v: -6, u: '°' },
+      { k: 'footAmp', l: 'Амплитуда наклона стопы', min: 0, max: 40, step: 0.5, v: 14, u: '°' },
+      { k: 'footPh', l: 'Фаза стопы', min: -180, max: 180, step: 1, v: 90, u: '°' },
+      { k: 'heelAmp', l: 'Пятка: отрыв при толчке', min: 0, max: 30, step: 0.5, v: 0, u: '°' }
+    ]}
+  ];
+
+  // ---------- key poses (frozen when their checkbox is on) ----------
+  // Near leg = the leg closer to the camera. Hip/knee/ankle angles, ankle: + toe up, - toe down.
+  var POSE_P = [
+    { k: 'pitch', l: 'Наклон таза', min: -20, max: 20, step: 0.5, u: '°' },
+    { k: 'height', l: 'Высота таза (сдвиг)', min: -0.2, max: 0.2, step: 0.001, u: 'м' },
+    { k: 'nHip', l: 'Бедро: ближняя нога', min: -60, max: 90, step: 0.5, u: '°' },
+    { k: 'nKnee', l: 'Колено: ближняя нога', min: 0, max: 120, step: 0.5, u: '°' },
+    { k: 'nAnk', l: 'Стопа: ближняя нога', min: -40, max: 40, step: 0.5, u: '°' },
+    { k: 'fHip', l: 'Бедро: дальняя нога', min: -60, max: 90, step: 0.5, u: '°' },
+    { k: 'fKnee', l: 'Колено: дальняя нога', min: 0, max: 120, step: 0.5, u: '°' },
+    { k: 'fAnk', l: 'Стопа: дальняя нога', min: -40, max: 40, step: 0.5, u: '°' }
+  ];
+  var POSES = [
+    { t: 'Поза 1 · Нога максимально вперёд', v: { pitch: 3, height: 0, nHip: 32, nKnee: 4, nAnk: 6, fHip: -20, fKnee: 10, fAnk: -18 } },
+    { t: 'Поза 2 · Проход над опорой', v: { pitch: 3, height: 0, nHip: 8, nKnee: 12, nAnk: 0, fHip: 10, fKnee: 45, fAnk: 0 } },
+    { t: 'Поза 3 · Толчок носком', v: { pitch: 2, height: 0, nHip: -18, nKnee: 10, nAnk: -22, fHip: 30, fKnee: 4, fAnk: 8 } },
+    { t: 'Поза 4 · Клиренс (нога в воздухе)', v: { pitch: 2, height: 0, nHip: 12, nKnee: 62, nAnk: -6, fHip: -8, fKnee: 6, fAnk: 4 } },
+    { t: 'Поза 5 · Стойка', v: { pitch: 0, height: 0, nHip: 0, nKnee: 0, nAnk: 0, fHip: 0, fKnee: 0, fAnk: 0 } }
+  ];
+
+  // ---------- state ----------
+  var S = { walk: {}, poses: [] };
+  WALK.forEach(function (g) { g.p.forEach(function (d) { S.walk[d.k] = d.v; }); });
+  POSES.forEach(function (p, i) { S.poses[i] = Object.assign({}, p.v); });
+  load();
+
+  var walking = true, frozenIdx = -1, phase = 0, scroll = 0, shiftY = 0;
+
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* private mode */ } }
+  function load() {
+    try {
+      var o = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (!o) return;
+      WALK.forEach(function (g) { g.p.forEach(function (d) {
+        var x = o.walk && o.walk[d.k];
+        if (typeof x === 'number' && x >= d.min && x <= d.max) S.walk[d.k] = x;
+      }); });
+      POSE_P.forEach(function (d) {
+        (o.poses || []).forEach(function (src, i) {
+          if (S.poses[i] && typeof src[d.k] === 'number') S.poses[i][d.k] = src[d.k];
+        });
+      });
+    } catch (e) { /* ignore broken storage */ }
+  }
+
+  // ---------- small matrix library (column-major, as WebGL expects) ----------
+  function I() { var m = new Float32Array(16); m[0] = m[5] = m[10] = m[15] = 1; return m; }
+  function mul(a, b) {
+    var o = new Float32Array(16);
+    for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++)
+      o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+    return o;
+  }
+  function T(x, y, z) { var m = I(); m[12] = x; m[13] = y; m[14] = z; return m; }
+  function Sc(x, y, z) { var m = I(); m[0] = x; m[5] = y; m[10] = z; return m; }
+  function RZ(a) { var m = I(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[1] = s; m[4] = -s; m[5] = c; return m; }
+  function RY(a) { var m = I(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[2] = -s; m[8] = s; m[10] = c; return m; }
+  function persp(fovy, asp, n, f) {
+    var m = new Float32Array(16), t = 1 / Math.tan(fovy / 2);
+    m[0] = t / asp; m[5] = t; m[10] = (f + n) / (n - f); m[11] = -1; m[14] = 2 * f * n / (n - f);
+    return m;
+  }
+  function lookAt(e, c, u) {
+    function nrm(v) { var l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; }
+    function cr(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+    function dt(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+    var z = nrm([e[0] - c[0], e[1] - c[1], e[2] - c[2]]);
+    var x = nrm(cr(u, z)), y = cr(z, x);
+    var m = I();
+    m[0] = x[0]; m[1] = y[0]; m[2] = z[0];
+    m[4] = x[1]; m[5] = y[1]; m[6] = z[1];
+    m[8] = x[2]; m[9] = y[2]; m[10] = z[2];
+    m[12] = -dt(x, e); m[13] = -dt(y, e); m[14] = -dt(z, e);
+    return m;
+  }
+  // planar shadow onto the plane y = h along light direction L
+  var LIGHT = [0.5, 1.0, 0.7];
+  var SH = (function (h) {
+    var Lx = LIGHT[0], Ly = LIGHT[1], Lz = LIGHT[2], m = I();
+    m[4] = -Lx / Ly; m[12] = Lx * h / Ly;
+    m[5] = 0; m[13] = h;
+    m[6] = -Lz / Ly; m[14] = Lz * h / Ly;
+    m[0] = 1; m[10] = 1;
+    return m;
+  })(0.003);
+
+  // ---------- meshes (unit cube and unit-diameter sphere) ----------
+  function cubeData() {
+    var v = [], ix = [], Q = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    for (var a = 0; a < 3; a++) for (var s = -1; s <= 1; s += 2) {
+      var n = [0, 0, 0], u = [0, 0, 0], w = [0, 0, 0];
+      n[a] = s; u[(a + 1) % 3] = 1; w[(a + 2) % 3] = 1;
+      var b = v.length / 6;
+      for (var q = 0; q < 4; q++) {
+        for (var i = 0; i < 3; i++) v.push(n[i] * 0.5 + u[i] * Q[q][0] * 0.5 + w[i] * Q[q][1] * 0.5);
+        v.push(n[0], n[1], n[2]);
+      }
+      ix.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    }
+    return { v: v, ix: ix };
+  }
+  function sphereData() {
+    var v = [], ix = [], R = 10, Sg = 14;
+    for (var i = 0; i <= R; i++) {
+      var th = Math.PI * i / R;
+      for (var j = 0; j <= Sg; j++) {
+        var ph = TAU * j / Sg;
+        var x = Math.sin(th) * Math.cos(ph), y = Math.cos(th), z = Math.sin(th) * Math.sin(ph);
+        v.push(x * 0.5, y * 0.5, z * 0.5, x, y, z);
+      }
+    }
+    for (i = 0; i < R; i++) for (j = 0; j < Sg; j++) {
+      var a = i * (Sg + 1) + j, b = a + Sg + 1;
+      ix.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+    return { v: v, ix: ix };
+  }
+
+  // ---------- WebGL2 setup ----------
+  var canvas = document.getElementById('c');
+  var gl = canvas.getContext('webgl2', { antialias: true });
+  if (!gl) {
+    document.body.insertAdjacentHTML('beforeend', '<p style="padding:20px">Нужен WebGL 2.</p>');
+    return;
+  }
+  var VS = '#version 300 es\n' +
+    'layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor;\n' +
+    'uniform mat4 uVP; uniform mat4 uM; out vec3 vN;\n' +
+    'void main(){ vN = mat3(uM) * aNor; gl_Position = uVP * uM * vec4(aPos, 1.0); }';
+  var FS = '#version 300 es\n' +
+    'precision highp float;\n' +
+    'in vec3 vN; uniform vec3 uColor; uniform float uFlat; out vec4 o;\n' +
+    'void main(){\n' +
+    '  if (uFlat > 0.5) { o = vec4(uColor, 1.0); return; }\n' +
+    '  float d = max(dot(normalize(vN), normalize(vec3(0.5, 1.0, 0.7))), 0.0);\n' +
+    '  o = vec4(uColor * (0.45 + 0.55 * d), 1.0);\n' +
+    '}';
+  function shader(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  var prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  gl.enable(gl.DEPTH_TEST);
+  var uVP = gl.getUniformLocation(prog, 'uVP'), uM = gl.getUniformLocation(prog, 'uM');
+  var uColor = gl.getUniformLocation(prog, 'uColor'), uFlat = gl.getUniformLocation(prog, 'uFlat');
+
+  function mesh(d) {
+    var vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    var vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(d.v), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+    var ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(d.ix), gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    return { vao: vao, n: d.ix.length };
+  }
+  var CUBE = mesh(cubeData()), SPH = mesh(sphereData());
+
+  function hex(h) { var n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
+  var C = {
+    pants: hex('#35578f'), pantsFar: hex('#243c66'), pelvis: hex('#2c3e5e'),
+    shirt: hex('#e46b3c'), shirtFar: hex('#b84f25'), skin: hex('#e2b48f'),
+    shoe: hex('#2a2a30'), shoeFar: hex('#1d1d22'),
+    shadow: hex('#86898f'),
+    sidewalk: hex('#c3c7cf'), joint: hex('#aeb3bc'), curb: hex('#d9d6cf'),
+    road: hex('#4a4f5a'), line: hex('#f2f2ee'), farWalk: hex('#b7bbc3'),
+    pole: hex('#3a3f4b'), lamp: hex('#ffe9a8'), trunk: hex('#6b5440'), leaf: hex('#5f8f5a'),
+    bld: ['#d9c8b0', '#b9c6d6', '#c9d6c0', '#e0d2c4', '#a9b4c4', '#cfbfd6'].map(hex)
+  };
+
+  // ---------- street ----------
+  function hash(n) { var s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
+  // calls cb(x, k) for every tile of width `period` that overlaps the view
+  function tiles(period, shift, cb) {
+    var a = Math.floor((-22 - shift) / period), b = Math.ceil((22 - shift) / period);
+    for (var k = a; k <= b; k++) cb(k * period + shift, k);
+  }
+  function buildStreet() {
+    var out = [];
+    function add(m, x, y, z, sx, sy, sz, c) {
+      out.push([m, mul(T(x, y, z), Sc(sx, sy, sz)), c]);
+    }
+    // far buildings, slower parallax
+    tiles(13, -scroll * 0.35, function (x, k) {
+      var r = hash(k), h = 5 + r * 9;
+      add(CUBE, x, -0.2 + h / 2, -21, 9 + r * 3, h, 6, C.bld[Math.floor(hash(k + 7) * C.bld.length)]);
+    });
+    add(CUBE, 0, -0.6, -16.5, 80, 0.8, 3, C.farWalk);      // far sidewalk
+    add(CUBE, 0, -0.45, -9.5, 80, 0.5, 11, C.road);       // road
+    tiles(4, -scroll, function (x) { add(CUBE, x, -0.19, -9.5, 2, 0.02, 0.18, C.line); });
+    add(CUBE, 0, -0.1, -4.2, 80, 0.2, 0.4, C.curb);       // curb
+    add(CUBE, 0, -0.5, 0, 80, 1, 8, C.sidewalk);          // near sidewalk, top at y=0
+    tiles(1.5, -scroll, function (x) { add(CUBE, x, 0.002, 0, 0.03, 0.004, 8, C.joint); });
+    tiles(10, -scroll, function (x) {                      // lamp posts
+      add(CUBE, x, 1.8, -3.3, 0.12, 3.6, 0.12, C.pole);
+      add(CUBE, x + 0.35, 3.55, -3.3, 0.7, 0.1, 0.1, C.pole);
+      add(CUBE, x + 0.7, 3.45, -3.3, 0.4, 0.12, 0.22, C.lamp);
+    });
+    tiles(16, 6 - scroll, function (x) {                   // trees
+      add(CUBE, x, 0.9, -3.0, 0.22, 1.8, 0.22, C.trunk);
+      add(SPH, x, 2.4, -3.0, 1.6, 1.6, 1.6, C.leaf);
+    });
+    return out;
+  }
+
+  // ---------- character (side view, walks along +X) ----------
+  function legAng(t) {
+    var W = S.walk, k = W.stride;
+    return {
+      hip: (W.flexBias + k * W.flexAmp * Math.sin(t + W.flexPh * D)) * D,
+      knee: Math.max(0, W.kneeBias + k * W.kneeAmp * Math.sin(t + W.kneePh * D) + W.clear * Math.max(0, -Math.sin(t))) * D,
+      shin: (W.shinBias + W.shinAmp * Math.sin(t + W.shinPh * D)) * D,
+      foot: (W.footBias + W.footAmp * Math.sin(t + W.footPh * D) - W.heelAmp * Math.max(0, -Math.cos(t))) * D
+    };
+  }
+  function seg(a, b, th, dp) {
+    var dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+    return mul(T((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2),
+      mul(RZ(Math.atan2(-dx, dy)), Sc(th, len, dp)));
+  }
+  function pose() {
+    var W = S.walk, t = TAU * phase, pe, lg;
+    if (frozenIdx >= 0) {
+      var P = S.poses[frozenIdx];
+      pe = { pitch: P.pitch * D, yaw: 0, lift: P.height };
+      lg = [
+        { hip: P.nHip * D, knee: Math.max(0, P.nKnee) * D, shin: 0, foot: P.nAnk * D },
+        { hip: P.fHip * D, knee: Math.max(0, P.fKnee) * D, shin: 0, foot: P.fAnk * D }
+      ];
+    } else {
+      pe = {
+        pitch: (W.pitchBias + W.pitchAmp * Math.sin(2 * t)) * D,
+        yaw: W.yawAmp * Math.sin(t + W.yawPh * D) * D,
+        lift: W.gap + W.bobAmp * Math.sin(2 * t + W.bobPh * D)
+      };
+      lg = [legAng(t), legAng(t + Math.PI)];
+    }
+    var sy = Math.sin(pe.yaw), cy = Math.cos(pe.yaw);
+
+    // 2D leg chains at pelvis height 0, then lift the body so the lowest sole touches the street
+    var legs = [0, 1].map(function (i) {
+      var L = lg[i], zo = i ? -HIP_Z : HIP_Z;
+      var hip = [zo * sy, 0], z = zo * cy;
+      var knee = [hip[0] + L1 * Math.sin(L.hip), -L1 * Math.cos(L.hip)];
+      var sa = L.hip - L.knee + L.shin;
+      var ankle = [knee[0] + L2 * Math.sin(sa), knee[1] - L2 * Math.cos(sa)];
+      var cf = Math.cos(L.foot), sf = Math.sin(L.foot);
+      var heel = [ankle[0] - 0.07 * cf + 0.11 * sf, ankle[1] - 0.07 * sf - 0.11 * cf];
+      var toe = [ankle[0] + 0.17 * cf + 0.11 * sf, ankle[1] + 0.17 * sf - 0.11 * cf];
+      var fc = [ankle[0] + 0.05 * cf + 0.07 * sf, ankle[1] + 0.05 * sf - 0.07 * cf];
+      return { hip: hip, knee: knee, ankle: ankle, fc: fc, z: z, foot: L.foot, minY: Math.min(heel[1], toe[1]) };
+    });
+    var Py = -Math.min(legs[0].minY, legs[1].minY) + pe.lift;
+
+    var parts = [];
+    var Mp = mul(T(0, Py, 0), mul(RY(pe.yaw), RZ(-pe.pitch)));   // pelvis frame, upper body rides on it
+    parts.push([CUBE, mul(Mp, Sc(0.28, 0.16, 0.24)), C.pelvis]);
+    parts.push([CUBE, mul(Mp, mul(T(0, 0.355, 0), Sc(0.30, 0.55, 0.22))), C.shirt]);
+    parts.push([SPH, mul(Mp, mul(T(0, 0.76, 0), Sc(0.22, 0.26, 0.22))), C.skin]);
+    parts.push([CUBE, mul(Mp, mul(T(0, 0.35, 0.16), Sc(0.1, 0.56, 0.1))), C.shirt]);
+    parts.push([CUBE, mul(Mp, mul(T(0, 0.35, -0.16), Sc(0.1, 0.56, 0.1))), C.shirtFar]);
+
+    legs.forEach(function (l, i) {
+      var pc = i ? C.pantsFar : C.pants, sc = i ? C.shoeFar : C.shoe;
+      var h3 = [l.hip[0], l.hip[1] + Py, l.z];
+      var k3 = [l.knee[0], l.knee[1] + Py, l.z];
+      var a3 = [l.ankle[0], l.ankle[1] + Py, l.z];
+      parts.push([CUBE, seg(h3, k3, 0.13, 0.13), pc]);
+      parts.push([SPH, mul(T(k3[0], k3[1], k3[2]), Sc(0.14, 0.14, 0.14)), pc]);
+      parts.push([CUBE, seg(k3, a3, 0.11, 0.11), pc]);
+      var fc = [l.fc[0], l.fc[1] + Py, l.z];
+      parts.push([CUBE, mul(T(fc[0], fc[1], fc[2]), mul(RZ(l.foot), Sc(0.24, 0.08, 0.11))), sc]);
+    });
+    return parts;
+  }
+
+  // ---------- drawing ----------
+  function draw(m, M, c, flat) {
+    gl.bindVertexArray(m.vao);
+    gl.uniformMatrix4fv(uM, false, M);
+    gl.uniform3fv(uColor, c);
+    gl.uniform1f(uFlat, flat);
+    gl.drawElements(gl.TRIANGLES, m.n, gl.UNSIGNED_SHORT, 0);
+  }
+  function render() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.81, 0.85, 0.9, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    // fixed side camera; on phones the scene is nudged up to clear the bottom sheet
+    var asp = canvas.width / canvas.height;
+    var P = persp(2 * Math.atan(0.268), asp, 0.1, 100);
+    P[9] = -shiftY;
+    var V = lookAt([0, 1.25, 8], [0, 0.95, 0], [0, 1, 0]);
+    gl.uniformMatrix4fv(uVP, false, mul(P, V));
+
+    buildStreet().forEach(function (p) { draw(p[0], p[1], p[2], 0); });
+
+    var ch = pose();
+    ch.forEach(function (p) { draw(p[0], mul(SH, p[1]), C.shadow, 1); });
+    ch.forEach(function (p) { draw(p[0], p[1], p[2], 0); });
+  }
+
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(innerWidth * dpr);
+    canvas.height = Math.round(innerHeight * dpr);
+  }
+  function updateShift() {
+    var mobile = matchMedia('(max-width: 640px)').matches;
+    shiftY = mobile ? panel.getBoundingClientRect().height / innerHeight : 0;
+  }
+
+  // ---------- UI ----------
+  var panel = document.getElementById('panel');
+  function dec(step) { return (String(step).split('.')[1] || '').length; }
+  function sliderRow(def, obj) {
+    var row = document.createElement('div'); row.className = 'row';
+    var lab = document.createElement('span'); lab.textContent = def.l;
+    var out = document.createElement('output');
+    var inp = document.createElement('input');
+    inp.type = 'range'; inp.min = def.min; inp.max = def.max; inp.step = def.step;
+    inp.value = obj[def.k];
+    function show() { out.textContent = obj[def.k].toFixed(dec(def.step)) + (def.u ? ' ' + def.u : ''); }
+    inp.addEventListener('input', function () { obj[def.k] = +inp.value; show(); save(); });
+    show();
+    row.append(lab, out, inp);
+    return row;
+  }
+
+  WALK.forEach(function (g) {
+    var d = document.createElement('details');
+    d.open = !!g.open;
+    var s = document.createElement('summary'); s.textContent = g.t;
+    d.append(s);
+    g.p.forEach(function (def) { d.append(sliderRow(def, S.walk)); });
+    panel.append(d);
+  });
+
+  var boxes = [];
+  POSES.forEach(function (p, i) {
+    var d = document.createElement('details'); d.className = 'pose';
+    var s = document.createElement('summary');
+    var name = document.createElement('span'); name.className = 'name'; name.textContent = p.t;
+    var lab = document.createElement('label'); lab.className = 'freeze';
+    var cb = document.createElement('input'); cb.type = 'checkbox';
+    lab.append(cb, document.createTextNode('Заморозить'));
+    s.append(name, lab);
+    d.append(s);
+    POSE_P.forEach(function (def) { d.append(sliderRow(def, S.poses[i])); });
+    cb.addEventListener('change', function () {
+      if (cb.checked) {
+        frozenIdx = i;
+        d.open = true;
+        boxes.forEach(function (b, j) { if (j !== i) b.checked = false; });
+      } else if (frozenIdx === i) {
+        frozenIdx = -1;
+      }
+    });
+    boxes.push(cb);
+    panel.append(d);
+  });
+
+  var walkBtn = document.getElementById('walk'), icon = document.getElementById('icon');
+  var ICON_PLAY = 'M8 5v14l11-7z', ICON_PAUSE = 'M6 5h4v14H6zM14 5h4v14h-4z';
+  function setWalk(on) {
+    walking = on;
+    walkBtn.setAttribute('aria-pressed', String(on));
+    icon.setAttribute('d', on ? ICON_PAUSE : ICON_PLAY);
+  }
+  walkBtn.addEventListener('click', function () { setWalk(!walking); });
+  setWalk(walking);
+
+  // ---------- loop ----------
+  function speed() {
+    var a = Math.abs(S.walk.stride * S.walk.flexAmp) * D;
+    return S.walk.cadence * 3.6 * Math.sin(a);   // matches the ground travel of the stride
+  }
+  var last = performance.now();
+  function frame(now) {
+    var dt = Math.min((now - last) / 1000, 0.05); last = now;
+    if (walking && frozenIdx < 0) {
+      phase = (phase + S.walk.cadence * dt) % 1;
+      scroll += speed() * dt;
+    }
+    updateShift();
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  window.addEventListener('resize', resize);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
