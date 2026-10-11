@@ -120,7 +120,7 @@
   var WALK = [
     { t: 'Общее: темп, шаг, камера', open: true, p: [
       { k: 'timeScale', l: 'Скорость времени', min: 0, max: 3, step: 0.01, v: 1, u: '×' },
-      { k: 'noVsync', type: 'check', l: 'Без V-Sync (рендер без ограничения FPS)', min: 0, max: 1, v: 1 },
+      { k: 'noVsync', type: 'check', l: 'Тест: без V-Sync (лагает, только замер запаса FPS)', min: 0, max: 1, v: 0 },
       { k: 'layer', type: 'check', l: 'Слои: позы + синусоиды поверх', min: 0, max: 1, v: 1 },
       { k: 'blend', l: 'Кроссфейд: синусоиды (0) — позы (1)', min: 0, max: 1, step: 0.01, v: 1 },
       { k: 'cadence', l: 'Темп, циклов в секунду', min: 0.2, max: 2, step: 0.01, v: 0.9 },
@@ -190,6 +190,7 @@
   WALK.forEach(function (g) { g.p.forEach(function (d) { S.walk[d.k] = d.v; }); });
   POSES.forEach(function (p, i) { S.poses[i] = Object.assign({}, p.v); });
   load();
+  S.walk.noVsync = 0;   // the uncapped loop is a benchmark only; always start with V-Sync
   var DEF = {};
   WALK.forEach(function (g) { g.p.forEach(function (d) { DEF[d.k] = d.v; }); });
 
