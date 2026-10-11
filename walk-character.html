@@ -347,6 +347,7 @@
     pants: hex('#35578f'), pantsFar: hex('#243c66'), pelvis: hex('#2c3e5e'),
     shirt: hex('#e46b3c'), shirtFar: hex('#b84f25'), skin: hex('#e2b48f'),
     shoe: hex('#2a2a30'), shoeFar: hex('#1d1d22'),
+    contact: hex('#2fbf4a'), contactFar: hex('#1f8a35'),
     shadow: hex('#86898f'),
     sidewalk: hex('#c3c7cf'), joint: hex('#aeb3bc'), curb: hex('#d9d6cf'),
     road: hex('#4a4f5a'), line: hex('#f2f2ee'), farWalk: hex('#b7bbc3'),
@@ -505,6 +506,8 @@
 
     legs.forEach(function (l, i) {
       var pc = i ? C.pantsFar : C.pants, sc = i ? C.shoeFar : C.shoe;
+      // sole within 1.5 cm of the street = foot on the ground, shown green
+      if (l.minY + Py <= 0.015) sc = i ? C.contactFar : C.contact;
       var h3 = [l.hip[0], l.hip[1] + Py, l.z];
       var k3 = [l.knee[0], l.knee[1] + Py, l.z];
       var a3 = [l.ankle[0], l.ankle[1] + Py, l.z];
