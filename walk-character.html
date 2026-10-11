@@ -59,6 +59,9 @@
   }
   .reset.armed { border-color: var(--accent); color: var(--accent); font-weight: 600; }
   .row input { height: 22px; }
+  .row.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
+  .row.check input { width: auto; height: auto; }
+  .row.off { opacity: 0.4; }
   .freeze {
     display: flex; align-items: center; gap: 4px; font-weight: 500;
     color: var(--ink); padding: 3px 6px; border-radius: 6px; background: #f1f3f7;
@@ -108,7 +111,8 @@
   var WALK = [
     { t: 'Общее: темп, шаг, камера', open: true, p: [
       { k: 'timeScale', l: 'Скорость времени', min: 0, max: 3, step: 0.01, v: 1, u: '×' },
-      { k: 'blend', l: 'Источник: синусоиды (0) — ключевые позы (1)', min: 0, max: 1, step: 0.01, v: 1 },
+      { k: 'layer', type: 'check', l: 'Слои: позы + синусоиды поверх', min: 0, max: 1, v: 1 },
+      { k: 'blend', l: 'Кроссфейд: синусоиды (0) — позы (1)', min: 0, max: 1, step: 0.01, v: 1 },
       { k: 'cadence', l: 'Темп, циклов в секунду', min: 0.2, max: 2, step: 0.01, v: 0.9 },
       { k: 'stride', l: 'Длина шага (масштаб маха)', min: 0.2, max: 2, step: 0.01, v: 1, u: '×' },
       { k: 'camDist', l: 'Камера: дистанция', min: 5, max: 20, step: 0.1, v: 9, u: 'м' }
@@ -176,6 +180,8 @@
   WALK.forEach(function (g) { g.p.forEach(function (d) { S.walk[d.k] = d.v; }); });
   POSES.forEach(function (p, i) { S.poses[i] = Object.assign({}, p.v); });
   load();
+  var DEF = {};
+  WALK.forEach(function (g) { g.p.forEach(function (d) { DEF[d.k] = d.v; }); });
 
   var walking = true, frozenIdx = -1, phase = 0, scroll = 0, shiftY = 0;
 
@@ -365,8 +371,9 @@
   }
 
   // ---------- character (side view, walks along +X) ----------
-  function legAng(t) {
-    var W = S.walk, k = W.stride;
+  function legAng(t, W) {
+    W = W || S.walk;
+    var k = W.stride;
     return {
       hip: (W.flexBias + k * W.flexAmp * Math.sin(t + W.flexPh * D)) * D,
       knee: Math.max(0, W.kneeBias + k * W.kneeAmp * Math.sin(t + W.kneePh * D) + W.clear * Math.max(0, -Math.sin(t))) * D,
@@ -416,7 +423,24 @@
       };
       lg = [legAng(t), legAng(t + Math.PI)];
       var w = W.blend;
-      if (w > 0) {
+      if (W.layer) {
+        // Layers: the key poses are the base gait; each sinusoid adds only how far
+        // its curve differs from its default curve, so at defaults it adds nothing
+        // and every slider tweak rides on top of the poses instead of fighting them.
+        var keys = [sampleKeys(phase), sampleKeys((phase + 0.5) % 1)];
+        keys.forEach(function (k, i) {
+          var tl = t + i * Math.PI, now = lg[i], ref = legAng(tl, DEF), L = {};
+          L.hip = k.hip * D + now.hip - ref.hip;
+          L.knee = Math.max(0, Math.max(0, k.knee) * D + now.knee - ref.knee);
+          L.foot = k.foot * D + now.foot - ref.foot;
+          L.shin = now.shin - ref.shin;
+          lg[i] = L;
+        });
+        var pitch0 = (DEF.pitchBias + DEF.pitchAmp * Math.sin(2 * t)) * D;
+        var bob0 = DEF.gap + DEF.bobAmp * Math.sin(2 * t + DEF.bobPh * D);
+        pe.pitch = keys[0].pitch * D + pe.pitch - pitch0;
+        pe.lift = keys[0].height + pe.lift - bob0 + DEF.gap;
+      } else if (w > 0) {
         var kn = sampleKeys(phase), kf = sampleKeys((phase + 0.5) % 1);
         function mix(a, b) { return a + (b - a) * w; }
         [kn, kf].forEach(function (k, i) {
@@ -515,7 +539,24 @@
   var poseUI = [], sliders = [];
 
   function dec(step) { return (String(step).split('.')[1] || '').length; }
+  function checkRow(def, obj, id) {
+    var row = document.createElement('label'); row.className = 'row check';
+    var inp = document.createElement('input'); inp.type = 'checkbox'; inp.id = id;
+    var txt = document.createElement('span'); txt.textContent = def.l;
+    function sync() { inp.checked = !!obj[def.k]; refreshLayer(); }
+    inp.addEventListener('change', function () { obj[def.k] = inp.checked ? 1 : 0; save(); refreshLayer(); });
+    sliders.push(sync);
+    row.append(inp, txt);
+    setTimeout(sync);
+    return row;
+  }
+  // the crossfade slider only matters when layers are off
+  function refreshLayer() {
+    var b = document.getElementById('w-blend');
+    if (b) { b.disabled = !!S.walk.layer; b.closest('.row').classList.toggle('off', !!S.walk.layer); }
+  }
   function sliderRow(def, obj, id, onTouch) {
+    if (def.type === 'check') return checkRow(def, obj, id);
     var row = document.createElement('div'); row.className = 'row';
     var lab = document.createElement('label'); lab.textContent = def.l; lab.htmlFor = id;
     var out = document.createElement('output'); out.htmlFor = id;
@@ -633,6 +674,10 @@
     // with key poses: the contact pose's leg spread is one step, two steps per cycle
     var P = S.poses[0], legLen = L1 + L2 + 0.11;
     var keys = 2 * legLen * Math.abs(Math.sin(P.nHip * D) - Math.sin(P.fHip * D));
+    if (S.walk.layer) {
+      var a0 = Math.abs(DEF.stride * DEF.flexAmp) * D;
+      return S.walk.cadence * keys * (Math.sin(a) / Math.max(0.05, Math.sin(a0)));
+    }
     return S.walk.cadence * (sine + (keys - sine) * S.walk.blend);
   }
   var last = performance.now();
