@@ -107,6 +107,8 @@
   // Cycle 0 = near heel touches the ground (Muybridge frame 1).
   var WALK = [
     { t: 'Общее: темп, шаг, камера', open: true, p: [
+      { k: 'timeScale', l: 'Скорость времени', min: 0, max: 3, step: 0.01, v: 1, u: '×' },
+      { k: 'blend', l: 'Источник: синусоиды (0) — ключевые позы (1)', min: 0, max: 1, step: 0.01, v: 1 },
       { k: 'cadence', l: 'Темп, циклов в секунду', min: 0.2, max: 2, step: 0.01, v: 0.9 },
       { k: 'stride', l: 'Длина шага (масштаб маха)', min: 0.2, max: 2, step: 0.01, v: 1, u: '×' },
       { k: 'camDist', l: 'Камера: дистанция', min: 5, max: 20, step: 0.1, v: 9, u: 'м' }
@@ -125,26 +127,26 @@
       { k: 'yawPh', l: 'Фаза поворота', min: -180, max: 180, step: 1, v: 90, u: '°' }
     ]},
     { t: 'Бедро', p: [
-      { k: 'flexBias', l: 'Среднее положение', min: -40, max: 40, step: 0.5, v: 3, u: '°' },
-      { k: 'flexAmp', l: 'Амплитуда маха', min: 0, max: 60, step: 0.5, v: 23, u: '°' },
+      { k: 'flexBias', l: 'Среднее положение', min: -120, max: 120, step: 0.5, v: 3, u: '°' },
+      { k: 'flexAmp', l: 'Амплитуда маха', min: 0, max: 120, step: 0.5, v: 23, u: '°' },
       { k: 'flexPh', l: 'Фаза маха', min: -180, max: 180, step: 1, v: 90, u: '°' }
     ]},
     { t: 'Колено', p: [
-      { k: 'kneeBias', l: 'Среднее сгибание', min: 0, max: 90, step: 0.5, v: 12, u: '°' },
-      { k: 'kneeAmp', l: 'Амплитуда сгибания', min: 0, max: 90, step: 0.5, v: 14, u: '°' },
+      { k: 'kneeBias', l: 'Среднее сгибание', min: 0, max: 170, step: 0.5, v: 12, u: '°' },
+      { k: 'kneeAmp', l: 'Амплитуда сгибания', min: 0, max: 170, step: 0.5, v: 14, u: '°' },
       { k: 'kneePh', l: 'Фаза сгибания', min: -180, max: 180, step: 1, v: -170, u: '°' },
-      { k: 'clear', l: 'Клиренс: подгиб при переносе', min: 0, max: 90, step: 0.5, v: 35, u: '°' }
+      { k: 'clear', l: 'Клиренс: подгиб при переносе', min: 0, max: 170, step: 0.5, v: 35, u: '°' }
     ]},
     { t: 'Голень', p: [
-      { k: 'shinBias', l: 'Средний наклон', min: -30, max: 30, step: 0.5, v: 0, u: '°' },
-      { k: 'shinAmp', l: 'Амплитуда наклона', min: 0, max: 30, step: 0.5, v: 3, u: '°' },
+      { k: 'shinBias', l: 'Средний наклон', min: -90, max: 90, step: 0.5, v: 0, u: '°' },
+      { k: 'shinAmp', l: 'Амплитуда наклона', min: 0, max: 90, step: 0.5, v: 3, u: '°' },
       { k: 'shinPh', l: 'Фаза наклона', min: -180, max: 180, step: 1, v: 0, u: '°' }
     ]},
     { t: 'Стопа и пятка', p: [
-      { k: 'footBias', l: 'Среднее положение стопы', min: -40, max: 40, step: 0.5, v: -5, u: '°' },
-      { k: 'footAmp', l: 'Амплитуда наклона стопы', min: 0, max: 40, step: 0.5, v: 15, u: '°' },
+      { k: 'footBias', l: 'Среднее положение стопы', min: -180, max: 180, step: 0.5, v: -5, u: '°' },
+      { k: 'footAmp', l: 'Амплитуда наклона стопы', min: 0, max: 180, step: 0.5, v: 15, u: '°' },
       { k: 'footPh', l: 'Фаза стопы', min: -180, max: 180, step: 1, v: 90, u: '°' },
-      { k: 'heelAmp', l: 'Пятка: отрыв при толчке', min: 0, max: 30, step: 0.5, v: 10, u: '°' }
+      { k: 'heelAmp', l: 'Пятка: отрыв при толчке', min: 0, max: 180, step: 0.5, v: 10, u: '°' }
     ]}
   ];
 
@@ -152,14 +154,14 @@
   // Taken from Muybridge's walking plate. Near leg = closer to the camera.
   // Foot angle: + toe up, - toe down. Touching a pose slider freezes that pose.
   var POSE_P = [
-    { k: 'pitch', l: 'Наклон таза', min: -20, max: 20, step: 0.5, u: '°' },
-    { k: 'height', l: 'Сдвиг высоты таза', min: -0.2, max: 0.2, step: 0.001, u: 'м' },
-    { k: 'nHip', l: 'Ближняя: бедро', min: -60, max: 90, step: 0.5, u: '°' },
-    { k: 'nKnee', l: 'Ближняя: колено', min: 0, max: 120, step: 0.5, u: '°' },
-    { k: 'nAnk', l: 'Ближняя: стопа', min: -60, max: 40, step: 0.5, u: '°' },
-    { k: 'fHip', l: 'Дальняя: бедро', min: -60, max: 90, step: 0.5, u: '°' },
-    { k: 'fKnee', l: 'Дальняя: колено', min: 0, max: 120, step: 0.5, u: '°' },
-    { k: 'fAnk', l: 'Дальняя: стопа', min: -60, max: 40, step: 0.5, u: '°' }
+    { k: 'pitch', l: 'Наклон таза', min: -60, max: 60, step: 0.5, u: '°' },
+    { k: 'height', l: 'Сдвиг высоты таза', min: -0.5, max: 0.5, step: 0.001, u: 'м' },
+    { k: 'nHip', l: 'Ближняя: бедро', min: -150, max: 150, step: 0.5, u: '°' },
+    { k: 'nKnee', l: 'Ближняя: колено', min: 0, max: 170, step: 0.5, u: '°' },
+    { k: 'nAnk', l: 'Ближняя: стопа', min: -180, max: 180, step: 0.5, u: '°' },
+    { k: 'fHip', l: 'Дальняя: бедро', min: -150, max: 150, step: 0.5, u: '°' },
+    { k: 'fKnee', l: 'Дальняя: колено', min: 0, max: 170, step: 0.5, u: '°' },
+    { k: 'fAnk', l: 'Дальняя: стопа', min: -180, max: 180, step: 0.5, u: '°' }
   ];
   var POSES = [
     { t: '1 · Контакт пяткой', ref: 'кадры 1, 7', v: { pitch: 2, height: 0, nHip: 25, nKnee: 2, nAnk: 15, fHip: -20, fKnee: 12, fAnk: -25 } },
@@ -372,6 +374,26 @@
       foot: (W.footBias + W.footAmp * Math.sin(t + W.footPh * D) - W.heelAmp * Math.max(0, -Math.cos(t))) * D
     };
   }
+  // The five key poses cover half a cycle (Muybridge frames 1-6). The second half is
+  // the same poses with the legs swapped, so the near leg runs through 10 keys per cycle.
+  // Cyclic Catmull-Rom keeps the motion smooth through every pose.
+  function nearKey(j) {
+    j = ((j % 10) + 10) % 10;
+    var P = S.poses[j % 5], m = j >= 5;
+    return {
+      hip: m ? P.fHip : P.nHip, knee: m ? P.fKnee : P.nKnee, foot: m ? P.fAnk : P.nAnk,
+      pitch: P.pitch, height: P.height
+    };
+  }
+  function cr(a, b, c, d, u) {
+    return 0.5 * (2 * b + (c - a) * u + (2 * a - 5 * b + 4 * c - d) * u * u + (3 * b - a - 3 * c + d) * u * u * u);
+  }
+  function sampleKeys(ph) {   // ph in [0,1), returns degrees / metres for the near leg
+    var x = ph * 10, j = Math.floor(x), u = x - j;
+    var a = nearKey(j - 1), b = nearKey(j), c = nearKey(j + 1), d = nearKey(j + 2), o = {};
+    ['hip', 'knee', 'foot', 'pitch', 'height'].forEach(function (k) { o[k] = cr(a[k], b[k], c[k], d[k], u); });
+    return o;
+  }
   function seg(a, b, th, dp) {
     var dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
     return mul(T((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2),
@@ -393,6 +415,20 @@
         lift: W.gap + W.bobAmp * Math.sin(2 * t + W.bobPh * D)
       };
       lg = [legAng(t), legAng(t + Math.PI)];
+      var w = W.blend;
+      if (w > 0) {
+        var kn = sampleKeys(phase), kf = sampleKeys((phase + 0.5) % 1);
+        function mix(a, b) { return a + (b - a) * w; }
+        [kn, kf].forEach(function (k, i) {
+          var L = lg[i];
+          L.hip = mix(L.hip, k.hip * D);
+          L.knee = mix(L.knee, Math.max(0, k.knee) * D);
+          L.foot = mix(L.foot, k.foot * D);
+          L.shin = mix(L.shin, 0);
+        });
+        pe.pitch = mix(pe.pitch, kn.pitch * D);
+        pe.lift = mix(pe.lift, W.gap + kn.height);
+      }
     }
     var sy = Math.sin(pe.yaw), cy = Math.cos(pe.yaw);
 
@@ -593,11 +629,15 @@
   // ---------- loop ----------
   function speed() {
     var a = Math.abs(S.walk.stride * S.walk.flexAmp) * D;
-    return S.walk.cadence * 3.6 * Math.sin(a);   // matches the ground travel of the stride
+    var sine = 3.6 * Math.sin(a);
+    // with key poses: the contact pose's leg spread is one step, two steps per cycle
+    var P = S.poses[0], legLen = L1 + L2 + 0.11;
+    var keys = 2 * legLen * Math.abs(Math.sin(P.nHip * D) - Math.sin(P.fHip * D));
+    return S.walk.cadence * (sine + (keys - sine) * S.walk.blend);
   }
   var last = performance.now();
   function frame(now) {
-    var dt = Math.min((now - last) / 1000, 0.05); last = now;
+    var dt = Math.min((now - last) / 1000, 0.05) * S.walk.timeScale; last = now;
     if (walking && frozenIdx < 0) {
       phase = (phase + S.walk.cadence * dt) % 1;
       scroll += speed() * dt;
