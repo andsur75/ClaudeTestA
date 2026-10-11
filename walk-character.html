@@ -39,10 +39,26 @@
     display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
     padding: 2px 2px 8px 18px;
   }
-  .row > span { color: var(--muted); }
+  .row > label { color: var(--muted); }
   .row output { font-variant-numeric: tabular-nums; font-weight: 600; }
   .row input { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: var(--accent); }
-  .pose summary .name { flex: 1; }
+  .pose summary .name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .pose summary small { color: var(--muted); font-weight: 400; }
+  .pose.active > summary { color: var(--accent); }
+  .pose.active .freeze { background: var(--accent); color: #fff; }
+  summary { user-select: none; -webkit-user-select: none; }
+  summary:focus-visible, .reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .section {
+    margin-top: 10px; padding: 8px 2px 4px; border-top: 2px solid var(--ink);
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  }
+  .section + details { border-top: 0; }
+  .reset {
+    margin-top: 12px; width: 100%; padding: 9px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--muted); font: inherit;
+  }
+  .reset.armed { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .row input { height: 22px; }
   .freeze {
     display: flex; align-items: center; gap: 4px; font-weight: 500;
     color: var(--ink); padding: 3px 6px; border-radius: 6px; background: #f1f3f7;
@@ -83,68 +99,74 @@
   var D = Math.PI / 180, TAU = Math.PI * 2;
   var L1 = 0.45, L2 = 0.44;   // thigh and shin length, m
   var HIP_Z = 0.09;           // leg offset from the body centre line (near leg is +Z, toward camera)
-  var KEY = 'walk-character-v1';
+  var KEY = 'walk-character-v2';
 
   // ---------- tunable parameters (walking) ----------
+  // Ordered from the most general to the most specific; key poses come last.
   // Every sinusoid is: value = bias + amp * sin(cycle + phase). Angles in degrees.
+  // Cycle 0 = near heel touches the ground (Muybridge frame 1).
   var WALK = [
-    { t: 'Скорость и высота таза', open: true, p: [
-      { k: 'cadence', l: 'Частота шага, циклов/с', min: 0.2, max: 2, step: 0.01, v: 1 },
-      { k: 'stride', l: 'Длина шага (масштаб бедра и колена)', min: 0.2, max: 2, step: 0.01, v: 1, u: '×' },
-      { k: 'gap', l: 'Сдвиг высоты таза', min: -0.1, max: 0.1, step: 0.001, v: 0, u: 'м' }
+    { t: 'Общее: темп, шаг, камера', open: true, p: [
+      { k: 'cadence', l: 'Темп, циклов в секунду', min: 0.2, max: 2, step: 0.01, v: 0.9 },
+      { k: 'stride', l: 'Длина шага (масштаб маха)', min: 0.2, max: 2, step: 0.01, v: 1, u: '×' },
+      { k: 'camDist', l: 'Камера: дистанция', min: 5, max: 20, step: 0.1, v: 9, u: 'м' }
     ]},
-    { t: 'Таз: подъём и наклон', p: [
-      { k: 'bobAmp', l: 'Амплитуда подъёма таза', min: 0, max: 0.1, step: 0.001, v: 0.02, u: 'м' },
-      { k: 'bobPh', l: 'Фаза подъёма таза', min: -180, max: 180, step: 1, v: 0, u: '°' },
-      { k: 'pitchBias', l: 'Базовый наклон вперёд', min: -20, max: 20, step: 0.1, v: 3, u: '°' },
-      { k: 'pitchAmp', l: 'Амплитуда наклона', min: 0, max: 20, step: 0.1, v: 3, u: '°' }
+    { t: 'Таз: высота и подъём', p: [
+      { k: 'gap', l: 'Сдвиг высоты таза', min: -0.1, max: 0.1, step: 0.001, v: 0, u: 'м' },
+      { k: 'bobAmp', l: 'Амплитуда подъёма', min: 0, max: 0.1, step: 0.001, v: 0.025, u: 'м' },
+      { k: 'bobPh', l: 'Фаза подъёма', min: -180, max: 180, step: 1, v: -90, u: '°' }
+    ]},
+    { t: 'Таз: наклон', p: [
+      { k: 'pitchBias', l: 'Базовый наклон вперёд', min: -20, max: 20, step: 0.1, v: 2, u: '°' },
+      { k: 'pitchAmp', l: 'Амплитуда наклона', min: 0, max: 20, step: 0.1, v: 1, u: '°' }
     ]},
     { t: 'Таз: поворот', p: [
-      { k: 'yawAmp', l: 'Амплитуда поворота таза', min: 0, max: 30, step: 0.5, v: 6, u: '°' },
-      { k: 'yawPh', l: 'Фаза поворота таза', min: -180, max: 180, step: 1, v: 0, u: '°' }
+      { k: 'yawAmp', l: 'Амплитуда поворота', min: 0, max: 30, step: 0.5, v: 4, u: '°' },
+      { k: 'yawPh', l: 'Фаза поворота', min: -180, max: 180, step: 1, v: 90, u: '°' }
     ]},
     { t: 'Бедро', p: [
-      { k: 'flexBias', l: 'Среднее положение', min: -40, max: 40, step: 0.5, v: 8, u: '°' },
-      { k: 'flexAmp', l: 'Амплитуда маха', min: 0, max: 60, step: 0.5, v: 26, u: '°' },
-      { k: 'flexPh', l: 'Фаза', min: -180, max: 180, step: 1, v: 90, u: '°' }
+      { k: 'flexBias', l: 'Среднее положение', min: -40, max: 40, step: 0.5, v: 3, u: '°' },
+      { k: 'flexAmp', l: 'Амплитуда маха', min: 0, max: 60, step: 0.5, v: 23, u: '°' },
+      { k: 'flexPh', l: 'Фаза маха', min: -180, max: 180, step: 1, v: 90, u: '°' }
     ]},
     { t: 'Колено', p: [
-      { k: 'kneeBias', l: 'Среднее сгибание', min: 0, max: 90, step: 0.5, v: 30, u: '°' },
-      { k: 'kneeAmp', l: 'Амплитуда сгибания', min: 0, max: 90, step: 0.5, v: 30, u: '°' },
-      { k: 'kneePh', l: 'Фаза сгибания', min: -180, max: 180, step: 1, v: -20, u: '°' },
-      { k: 'clear', l: 'Клиренс: подъём стопы при махе', min: 0, max: 90, step: 0.5, v: 25, u: '°' }
+      { k: 'kneeBias', l: 'Среднее сгибание', min: 0, max: 90, step: 0.5, v: 12, u: '°' },
+      { k: 'kneeAmp', l: 'Амплитуда сгибания', min: 0, max: 90, step: 0.5, v: 14, u: '°' },
+      { k: 'kneePh', l: 'Фаза сгибания', min: -180, max: 180, step: 1, v: -170, u: '°' },
+      { k: 'clear', l: 'Клиренс: подгиб при переносе', min: 0, max: 90, step: 0.5, v: 35, u: '°' }
     ]},
     { t: 'Голень', p: [
-      { k: 'shinBias', l: 'Среднее наклон голени', min: -30, max: 30, step: 0.5, v: 0, u: '°' },
-      { k: 'shinAmp', l: 'Амплитуда наклона голени', min: 0, max: 30, step: 0.5, v: 4, u: '°' },
-      { k: 'shinPh', l: 'Фаза голени', min: -180, max: 180, step: 1, v: 0, u: '°' }
+      { k: 'shinBias', l: 'Средний наклон', min: -30, max: 30, step: 0.5, v: 0, u: '°' },
+      { k: 'shinAmp', l: 'Амплитуда наклона', min: 0, max: 30, step: 0.5, v: 3, u: '°' },
+      { k: 'shinPh', l: 'Фаза наклона', min: -180, max: 180, step: 1, v: 0, u: '°' }
     ]},
     { t: 'Стопа и пятка', p: [
-      { k: 'footBias', l: 'Среднее положение стопы', min: -40, max: 40, step: 0.5, v: -6, u: '°' },
-      { k: 'footAmp', l: 'Амплитуда наклона стопы', min: 0, max: 40, step: 0.5, v: 14, u: '°' },
+      { k: 'footBias', l: 'Среднее положение стопы', min: -40, max: 40, step: 0.5, v: -5, u: '°' },
+      { k: 'footAmp', l: 'Амплитуда наклона стопы', min: 0, max: 40, step: 0.5, v: 15, u: '°' },
       { k: 'footPh', l: 'Фаза стопы', min: -180, max: 180, step: 1, v: 90, u: '°' },
-      { k: 'heelAmp', l: 'Пятка: отрыв при толчке', min: 0, max: 30, step: 0.5, v: 0, u: '°' }
+      { k: 'heelAmp', l: 'Пятка: отрыв при толчке', min: 0, max: 30, step: 0.5, v: 10, u: '°' }
     ]}
   ];
 
   // ---------- key poses (frozen when their checkbox is on) ----------
-  // Near leg = the leg closer to the camera. Hip/knee/ankle angles, ankle: + toe up, - toe down.
+  // Taken from Muybridge's walking plate. Near leg = closer to the camera.
+  // Foot angle: + toe up, - toe down. Touching a pose slider freezes that pose.
   var POSE_P = [
     { k: 'pitch', l: 'Наклон таза', min: -20, max: 20, step: 0.5, u: '°' },
-    { k: 'height', l: 'Высота таза (сдвиг)', min: -0.2, max: 0.2, step: 0.001, u: 'м' },
-    { k: 'nHip', l: 'Бедро: ближняя нога', min: -60, max: 90, step: 0.5, u: '°' },
-    { k: 'nKnee', l: 'Колено: ближняя нога', min: 0, max: 120, step: 0.5, u: '°' },
-    { k: 'nAnk', l: 'Стопа: ближняя нога', min: -40, max: 40, step: 0.5, u: '°' },
-    { k: 'fHip', l: 'Бедро: дальняя нога', min: -60, max: 90, step: 0.5, u: '°' },
-    { k: 'fKnee', l: 'Колено: дальняя нога', min: 0, max: 120, step: 0.5, u: '°' },
-    { k: 'fAnk', l: 'Стопа: дальняя нога', min: -40, max: 40, step: 0.5, u: '°' }
+    { k: 'height', l: 'Сдвиг высоты таза', min: -0.2, max: 0.2, step: 0.001, u: 'м' },
+    { k: 'nHip', l: 'Ближняя: бедро', min: -60, max: 90, step: 0.5, u: '°' },
+    { k: 'nKnee', l: 'Ближняя: колено', min: 0, max: 120, step: 0.5, u: '°' },
+    { k: 'nAnk', l: 'Ближняя: стопа', min: -60, max: 40, step: 0.5, u: '°' },
+    { k: 'fHip', l: 'Дальняя: бедро', min: -60, max: 90, step: 0.5, u: '°' },
+    { k: 'fKnee', l: 'Дальняя: колено', min: 0, max: 120, step: 0.5, u: '°' },
+    { k: 'fAnk', l: 'Дальняя: стопа', min: -60, max: 40, step: 0.5, u: '°' }
   ];
   var POSES = [
-    { t: 'Поза 1 · Нога максимально вперёд', v: { pitch: 3, height: 0, nHip: 32, nKnee: 4, nAnk: 6, fHip: -20, fKnee: 10, fAnk: -18 } },
-    { t: 'Поза 2 · Проход над опорой', v: { pitch: 3, height: 0, nHip: 8, nKnee: 12, nAnk: 0, fHip: 10, fKnee: 45, fAnk: 0 } },
-    { t: 'Поза 3 · Толчок носком', v: { pitch: 2, height: 0, nHip: -18, nKnee: 10, nAnk: -22, fHip: 30, fKnee: 4, fAnk: 8 } },
-    { t: 'Поза 4 · Клиренс (нога в воздухе)', v: { pitch: 2, height: 0, nHip: 12, nKnee: 62, nAnk: -6, fHip: -8, fKnee: 6, fAnk: 4 } },
-    { t: 'Поза 5 · Стойка', v: { pitch: 0, height: 0, nHip: 0, nKnee: 0, nAnk: 0, fHip: 0, fKnee: 0, fAnk: 0 } }
+    { t: '1 · Контакт пяткой', ref: 'кадры 1, 7', v: { pitch: 2, height: 0, nHip: 25, nKnee: 2, nAnk: 15, fHip: -20, fKnee: 12, fAnk: -25 } },
+    { t: '2 · Загрузка', ref: 'кадры 2–3, 8–9', v: { pitch: 2, height: -0.01, nHip: 20, nKnee: 15, nAnk: 0, fHip: -18, fKnee: 35, fAnk: -40 } },
+    { t: '3 · Отрыв ноги', ref: 'кадры 4, 10', v: { pitch: 2, height: 0, nHip: 8, nKnee: 8, nAnk: 0, fHip: -12, fKnee: 60, fAnk: -35 } },
+    { t: '4 · Проход', ref: 'кадры 5–6, 11', v: { pitch: 2, height: 0.01, nHip: -5, nKnee: 4, nAnk: 0, fHip: 18, fKnee: 55, fAnk: -15 } },
+    { t: '5 · Вынос вперёд', ref: 'кадр 12', v: { pitch: 2, height: 0, nHip: -16, nKnee: 4, nAnk: -8, fHip: 26, fKnee: 18, fAnk: 5 } }
   ];
 
   // ---------- state ----------
@@ -428,7 +450,9 @@
     var asp = canvas.width / canvas.height;
     var P = persp(2 * Math.atan(0.268), asp, 0.1, 100);
     P[9] = -shiftY;
-    var V = lookAt([0, 1.25, 8], [0, 0.95, 0], [0, 1, 0]);
+    // portrait phones only have the top half free, so pull the camera back there
+    var cd = S.walk.camDist * Math.max(1, 0.75 / asp);
+    var V = lookAt([0, 0.9 + cd * 0.04, cd], [0, 0.9, 0], [0, 1, 0]);
     gl.uniformMatrix4fv(uVP, false, mul(P, V));
 
     buildStreet().forEach(function (p) { draw(p[0], p[1], p[2], 0); });
@@ -450,62 +474,120 @@
 
   // ---------- UI ----------
   var panel = document.getElementById('panel');
+  var walkBtn = document.getElementById('walk'), icon = document.getElementById('icon');
+  var ICON_PLAY = 'M8 5v14l11-7z', ICON_PAUSE = 'M6 5h4v14H6zM14 5h4v14h-4z';
+  var poseUI = [], sliders = [];
+
   function dec(step) { return (String(step).split('.')[1] || '').length; }
-  function sliderRow(def, obj) {
+  function sliderRow(def, obj, id, onTouch) {
     var row = document.createElement('div'); row.className = 'row';
-    var lab = document.createElement('span'); lab.textContent = def.l;
-    var out = document.createElement('output');
+    var lab = document.createElement('label'); lab.textContent = def.l; lab.htmlFor = id;
+    var out = document.createElement('output'); out.htmlFor = id;
     var inp = document.createElement('input');
-    inp.type = 'range'; inp.min = def.min; inp.max = def.max; inp.step = def.step;
-    inp.value = obj[def.k];
-    function show() { out.textContent = obj[def.k].toFixed(dec(def.step)) + (def.u ? ' ' + def.u : ''); }
-    inp.addEventListener('input', function () { obj[def.k] = +inp.value; show(); save(); });
-    show();
+    inp.type = 'range'; inp.id = id; inp.min = def.min; inp.max = def.max; inp.step = def.step;
+    function show() {
+      var txt = obj[def.k].toFixed(dec(def.step));
+      if (/^-0(\.0*)?$/.test(txt)) txt = txt.slice(1);
+      out.textContent = txt + (def.u ? ' ' + def.u : '');
+    }
+    function sync() { inp.value = obj[def.k]; show(); }
+    inp.addEventListener('input', function () {
+      obj[def.k] = +inp.value; show(); save();
+      if (onTouch) onTouch();
+    });
+    sync();
+    sliders.push(sync);
     row.append(lab, out, inp);
     return row;
   }
 
-  WALK.forEach(function (g) {
+  function setWalk(on) {
+    walking = on;
+    walkBtn.setAttribute('aria-pressed', String(on));
+    walkBtn.setAttribute('aria-label', on ? 'Пауза' : 'Идти');
+    icon.setAttribute('d', on ? ICON_PAUSE : ICON_PLAY);
+  }
+  // only one pose can be frozen at a time; -1 = walking cycle
+  function setFrozen(i) {
+    frozenIdx = i;
+    poseUI.forEach(function (u, j) {
+      u.cb.checked = j === i;
+      u.d.classList.toggle('active', j === i);
+    });
+    if (i >= 0) poseUI[i].d.open = true;
+  }
+
+  WALK.forEach(function (g, gi) {
     var d = document.createElement('details');
     d.open = !!g.open;
     var s = document.createElement('summary'); s.textContent = g.t;
     d.append(s);
-    g.p.forEach(function (def) { d.append(sliderRow(def, S.walk)); });
+    g.p.forEach(function (def) { d.append(sliderRow(def, S.walk, 'w-' + def.k)); });
     panel.append(d);
   });
 
-  var boxes = [];
+  var head = document.createElement('div'); head.className = 'section';
+  head.textContent = 'Ключевые позы';
+  panel.append(head);
+
   POSES.forEach(function (p, i) {
     var d = document.createElement('details'); d.className = 'pose';
     var s = document.createElement('summary');
-    var name = document.createElement('span'); name.className = 'name'; name.textContent = p.t;
+    var name = document.createElement('span'); name.className = 'name';
+    name.innerHTML = '';
+    name.append(document.createTextNode(p.t));
+    var ref = document.createElement('small'); ref.textContent = 'Muybridge: ' + p.ref;
+    name.append(ref);
     var lab = document.createElement('label'); lab.className = 'freeze';
-    var cb = document.createElement('input'); cb.type = 'checkbox';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'freeze-' + i;
     lab.append(cb, document.createTextNode('Заморозить'));
+    // keep a click on the checkbox from also folding the folder
+    lab.addEventListener('click', function (e) { e.stopPropagation(); });
     s.append(name, lab);
     d.append(s);
-    POSE_P.forEach(function (def) { d.append(sliderRow(def, S.poses[i])); });
-    cb.addEventListener('change', function () {
-      if (cb.checked) {
-        frozenIdx = i;
-        d.open = true;
-        boxes.forEach(function (b, j) { if (j !== i) b.checked = false; });
-      } else if (frozenIdx === i) {
-        frozenIdx = -1;
-      }
+    POSE_P.forEach(function (def) {
+      d.append(sliderRow(def, S.poses[i], 'p' + i + '-' + def.k, function () {
+        if (frozenIdx !== i) setFrozen(i);
+      }));
     });
-    boxes.push(cb);
+    cb.addEventListener('change', function () {
+      setFrozen(cb.checked ? i : -1);
+    });
+    poseUI.push({ d: d, cb: cb });
     panel.append(d);
   });
 
-  var walkBtn = document.getElementById('walk'), icon = document.getElementById('icon');
-  var ICON_PLAY = 'M8 5v14l11-7z', ICON_PAUSE = 'M6 5h4v14H6zM14 5h4v14h-4z';
-  function setWalk(on) {
-    walking = on;
-    walkBtn.setAttribute('aria-pressed', String(on));
-    icon.setAttribute('d', on ? ICON_PAUSE : ICON_PLAY);
-  }
-  walkBtn.addEventListener('click', function () { setWalk(!walking); });
+  // reset: two taps so a stray tap cannot wipe the tuning
+  var reset = document.createElement('button');
+  reset.type = 'button'; reset.className = 'reset'; reset.id = 'reset';
+  reset.textContent = 'Сбросить все значения';
+  var resetArmed = null;
+  reset.addEventListener('click', function () {
+    if (!resetArmed) {
+      reset.textContent = 'Нажмите ещё раз для сброса';
+      reset.classList.add('armed');
+      resetArmed = setTimeout(function () {
+        resetArmed = null; reset.classList.remove('armed');
+        reset.textContent = 'Сбросить все значения';
+      }, 3000);
+      return;
+    }
+    clearTimeout(resetArmed); resetArmed = null;
+    WALK.forEach(function (g) { g.p.forEach(function (d) { S.walk[d.k] = d.v; }); });
+    POSES.forEach(function (p, i) { S.poses[i] = Object.assign(S.poses[i], p.v); });
+    sliders.forEach(function (f) { f(); });
+    save();
+    reset.classList.remove('armed');
+    reset.textContent = 'Значения сброшены';
+    setTimeout(function () { reset.textContent = 'Сбросить все значения'; }, 1500);
+  });
+  panel.append(reset);
+
+  // the round button always means "walk": it also releases a frozen pose
+  walkBtn.addEventListener('click', function () {
+    if (frozenIdx >= 0) { setFrozen(-1); setWalk(true); return; }
+    setWalk(!walking);
+  });
   setWalk(walking);
 
   // ---------- loop ----------
